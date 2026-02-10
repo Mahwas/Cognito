@@ -1,0 +1,5 @@
+{
+  "name": "Cognito - AI Learning Helper",
+  "description": "An intelligent, adaptive learning assistant that generates custom study plans, quizzes, and provides real-time tutoring on any topic.",
+  "requestFramePermissions": []
+}
