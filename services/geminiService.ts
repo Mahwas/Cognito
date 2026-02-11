@@ -36,21 +36,45 @@ export const generateStudyPlan = async (topic: string, targetMinutes?: number): 
     required: ["topic", "modules"]
   };
 
-  const timeConstraintPrompt = targetMinutes 
-    ? `The user wants to spend approximately ${targetMinutes} minutes in total. Adjust the module count and depth of content to fit this total timeframe roughly.`
-    : "Create a comprehensive plan with a realistic timeframe.";
+  const totalBudget = targetMinutes || 120;
+  // Aim for roughly 60 minute modules
+  const moduleCount = Math.max(1, Math.round(totalBudget / 60));
+
+  const instruction = `The user wants a study plan for "${topic}" with a total budget of ${totalBudget} minutes.
+       
+       CRITICAL GRANULARITY RULE:
+       - Generate exactly ${moduleCount} module(s).
+       - Each module should be approximately 60 minutes long.
+       - If the total time is less than 60 minutes, generate 1 module for the full duration.
+       
+       PEDAGOGICAL STRUCTURE:
+       - Module 1 MUST be a "Big Picture" introduction. Focus on the 'Why', real-world context, and mental models to orient the learner.
+       - Subsequent modules should follow a logical deep-dive progression: Foundational Tools -> Implementation -> Advanced Synthesis.
+       
+       Every plan starts with high-level intuition before technical depth.`;
+
+  const prompt = `Design a study plan for: "${topic}".
+
+${instruction}
+
+Each module must include:
+- A concise, punchy title.
+- A description explaining exactly why this step is necessary in the current progression.
+- An estimatedMinutes value (usually 60, unless total budget is small).
+- A focused list of 3-5 subtopics (topics array).
+
+DO NOT start with niche academic debates. Start with an accessible hook and broad context.
+
+Return JSON only.`;
 
   try {
     const response = await ai.models.generateContent({
       model: modelId,
-      contents: `Create a step-by-step study plan for learning: "${topic}". 
-      ${timeConstraintPrompt}
-      Break it down into distinct modules. 
-      Return JSON only.`,
+      contents: prompt,
       config: {
         responseMimeType: "application/json",
         responseSchema: schema,
-        systemInstruction: "You are an expert curriculum designer. create structured, engaging learning paths that respect the user's time constraints."
+        systemInstruction: "You are an elite educational strategist who believes in deep-work blocks. You structure learning into substantial 1-hour modules rather than fragmented tasks."
       }
     });
 
@@ -64,20 +88,47 @@ export const generateStudyPlan = async (topic: string, targetMinutes?: number): 
   }
 };
 
-export const fetchModuleResources = async (moduleTitle: string, topics: string[]): Promise<{ advice: string, resources: ModuleResource[] }> => {
+export const fetchModuleResources = async (moduleTitle: string, topics: string[], estimatedMinutes: number): Promise<{ advice: string, resources: ModuleResource[] }> => {
   const modelId = "gemini-3-flash-preview";
   
+  const prompt = `Generate a comprehensive learning strategy for: ${topics.join(', ')}.
+Total Session Duration: ${estimatedMinutes} minutes.
+
+BROAD STRUCTURAL GUIDELINES:
+- Avoid micro-managing the user's time with tiny minute increments (e.g., "3 mins for intro").
+- Instead, divide the session into major strategic phases (e.g., Conceptual Grounding, Hands-on Implementation, Synthesis/Review).
+- Ensure the complexity of instructions matches the ${estimatedMinutes}-minute window.
+
+STRUCTURE YOUR GUIDANCE AS FOLLOWS:
+
+# Master Goal: [The overarching outcome of this module]
+
+Briefly introduce the context of this specific module. Why is it the next logical step?
+
+**Phase: [Name of Phase]**
+Focus on high-level instructions. Explain *what* to learn and *how* to process it.
+If a link is needed, list it immediately below the phase description on its own line: [Link Title](URL).
+
+**Phase: [Name of Phase]**
+Continue the logical progression. 
+
+# Strategic Triage
+- Use bullets to highlight the "High Signal" concepts to focus on.
+- Mention what to skim or ignore to stay within the total ${estimatedMinutes}-minute budget.
+
+CURATION RULE: Max 3-4 high-signal resources. Output clean Markdown. Do not include specific "Orientation Buffer" headings with fixed small timers.`;
+
   try {
     const response = await ai.models.generateContent({
       model: modelId,
-      contents: `Find the best online resources (articles, documentation, official guides, videos) to learn about: ${topics.join(', ')}. 
-      Also provide brief strategic advice on how a student should approach learning this module specifically.`,
+      contents: prompt,
       config: {
-        tools: [{ googleSearch: {} }]
+        tools: [{ googleSearch: {} }],
+        systemInstruction: "You are a master curator who organizes information into logical, flowing phases rather than rigid, timed schedules."
       }
     });
 
-    const advice = response.text || "Start with the basics and practice as you go.";
+    const advice = response.text || "Focus on the basics and keep moving.";
     const resources: ModuleResource[] = [];
     
     const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;

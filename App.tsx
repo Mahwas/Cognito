@@ -9,7 +9,7 @@ import { BrainIcon } from './components/Icons';
 const STORAGE_KEY = 'cognito_study_data';
 
 const TIME_OPTIONS = [
-    { label: 'Speed (30m)', value: 30 },
+    { label: 'Speed (1h)', value: 60 },
     { label: 'Normal (2h)', value: 120 },
     { label: 'Deep (5h)', value: 300 },
     { label: 'Expert (10h+)', value: 600 }
@@ -56,6 +56,24 @@ const App: React.FC = () => {
     if (!topic.trim()) return;
     setLoading(true);
     setError(null);
+    
+    // Check if we already have a plan for this exact topic (case insensitive)
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.plan && parsed.plan.topic.toLowerCase() === topic.trim().toLowerCase()) {
+          setPlan(parsed.plan);
+          setCompletedModules(parsed.completedModules || []);
+          setState(AppState.PLANNING);
+          setLoading(false);
+          return;
+        }
+      } catch (e) {
+        console.error("Error checking existing plan", e);
+      }
+    }
+
     try {
       const generatedPlan = await generateStudyPlan(topic, targetTime || undefined);
       generatedPlan.modules = generatedPlan.modules.map((m, i) => ({
