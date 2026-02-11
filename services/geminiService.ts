@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { StudyPlan, QuizQuestion, ModuleResource } from "../types";
 
-const apiKey = process.env.API_KEY || '';
+const apiKey = process.env.GEMINI_API_KEY || '';
 const ai = new GoogleGenAI({ apiKey });
 
 const cleanJson = (text: string): string => {
@@ -10,7 +10,7 @@ const cleanJson = (text: string): string => {
 
 export const generateStudyPlan = async (topic: string, targetMinutes?: number): Promise<StudyPlan> => {
   const modelId = "gemini-3-flash-preview";
-  
+
   const schema: Schema = {
     type: Type.OBJECT,
     properties: {
@@ -24,7 +24,7 @@ export const generateStudyPlan = async (topic: string, targetMinutes?: number): 
             title: { type: Type.STRING },
             description: { type: Type.STRING },
             estimatedMinutes: { type: Type.INTEGER },
-            topics: { 
+            topics: {
               type: Type.ARRAY,
               items: { type: Type.STRING }
             }
@@ -80,7 +80,7 @@ Return JSON only.`;
 
     const text = response.text;
     if (!text) throw new Error("No response from AI");
-    
+
     return JSON.parse(cleanJson(text)) as StudyPlan;
   } catch (error) {
     console.error("Error generating study plan:", error);
@@ -88,22 +88,24 @@ Return JSON only.`;
   }
 };
 
-export const fetchModuleResources = async (moduleTitle: string, topics: string[], estimatedMinutes: number): Promise<{ advice: string, resources: ModuleResource[] }> => {
+export const fetchModuleResources = async (overallTopic: string, moduleTitle: string, topics: string[], estimatedMinutes: number): Promise<{ advice: string, resources: ModuleResource[], isFallback?: boolean }> => {
   const modelId = "gemini-3-flash-preview";
-  
-  const prompt = `Generate a comprehensive learning strategy for: ${topics.join(', ')}.
+
+  const prompt = `Generate a comprehensive learning strategy for the module: "${moduleTitle}" which is part of a larger plan for "${overallTopic}".
+The focus of this module is: ${topics.join(', ')}.
 Total Session Duration: ${estimatedMinutes} minutes.
 
 BROAD STRUCTURAL GUIDELINES:
 - Avoid micro-managing the user's time with tiny minute increments (e.g., "3 mins for intro").
 - Instead, divide the session into major strategic phases (e.g., Conceptual Grounding, Hands-on Implementation, Synthesis/Review).
 - Ensure the complexity of instructions matches the ${estimatedMinutes}-minute window.
+- Ensure the content fits to learning speed of humans. dont use strict time planning.
 
 STRUCTURE YOUR GUIDANCE AS FOLLOWS:
 
 # Master Goal: [The overarching outcome of this module]
 
-Briefly introduce the context of this specific module. Why is it the next logical step?
+Briefly introduce the context of this specific module within the study of ${overallTopic}. Why is it the next logical step?
 
 **Phase: [Name of Phase]**
 Focus on high-level instructions. Explain *what* to learn and *how* to process it.
@@ -114,9 +116,8 @@ Continue the logical progression.
 
 # Strategic Triage
 - Use bullets to highlight the "High Signal" concepts to focus on.
-- Mention what to skim or ignore to stay within the total ${estimatedMinutes}-minute budget.
 
-CURATION RULE: Max 3-4 high-signal resources. Output clean Markdown. Do not include specific "Orientation Buffer" headings with fixed small timers.`;
+CURATION RULE: Max 3-4 high-signal resources. You MUST use Google Search to verify each link is currently active and relevant. Output clean Markdown. Do not include specific "Orientation Buffer" headings with fixed small timers.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -124,13 +125,13 @@ CURATION RULE: Max 3-4 high-signal resources. Output clean Markdown. Do not incl
       contents: prompt,
       config: {
         tools: [{ googleSearch: {} }],
-        systemInstruction: "You are a master curator who organizes information into logical, flowing phases rather than rigid, timed schedules."
+        systemInstruction: "You are a master curator. You MUST use the Google Search tool to verify that every resource and link you recommend is currently active, relevant, and accessible. Organize information into logical, flowing phases."
       }
     });
 
     const advice = response.text || "Focus on the basics and keep moving.";
     const resources: ModuleResource[] = [];
-    
+
     const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
     if (groundingChunks) {
       groundingChunks.forEach((chunk: any) => {
@@ -146,10 +147,29 @@ CURATION RULE: Max 3-4 high-signal resources. Output clean Markdown. Do not incl
 
     const uniqueResources = resources.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
 
-    return { advice, resources: uniqueResources.slice(0, 5) };
-  } catch (error) {
-    console.error("Error fetching resources:", error);
-    return { advice: "Error fetching specific resources.", resources: [] };
+    return { advice, resources: uniqueResources.slice(0, 5), isFallback: false };
+  } catch (error: any) {
+    console.warn("Primary search-enabled fetch failed. Attempting Analytical Fallback.", error);
+
+    // Fallback: Analytical Mode (No Search)
+    try {
+      const fallbackResponse = await ai.models.generateContent({
+        model: modelId,
+        contents: prompt,
+        config: {
+          systemInstruction: "You are a master curator. Deep search is currently unavailable due to high demand. You MUST provide a 'Pure Analytical Mode' response. Focus intensely on Conceptual Explanations and Mental Models. Do NOT invent fake links. Instead of links, provide precise search terms that the user can use later."
+        }
+      });
+
+      return {
+        advice: fallbackResponse.text || "Focus on the basics and keep moving.",
+        resources: [],
+        isFallback: true
+      };
+    } catch (fallbackError) {
+      console.error("Critical failure in both Search and Analytical modes:", fallbackError);
+      return { advice: "Error fetching content. Please try again in a moment.", resources: [], isFallback: false };
+    }
   }
 };
 
@@ -163,8 +183,8 @@ export const generateQuiz = async (topic: string, difficulty: 'easy' | 'medium' 
       properties: {
         id: { type: Type.INTEGER },
         question: { type: Type.STRING },
-        options: { 
-          type: Type.ARRAY, 
+        options: {
+          type: Type.ARRAY,
           items: { type: Type.STRING }
         },
         correctAnswerIndex: { type: Type.INTEGER },
@@ -200,11 +220,11 @@ export const getTutorResponse = async (history: { role: string, parts: { text: s
 
   try {
     const chat = ai.chats.create({
-        model: modelId,
-        history: history,
-        config: {
-            systemInstruction: "You are a helpful, encouraging, and Socratic tutor. Don't just give answers; guide the student to understanding. Keep responses concise unless asked for elaboration."
-        }
+      model: modelId,
+      history: history,
+      config: {
+        systemInstruction: "You are a helpful, encouraging, and Socratic tutor. Don't just give answers; guide the student to understanding. Keep responses concise unless asked for elaboration."
+      }
     });
 
     const result = await chat.sendMessage({ message: newMessage });

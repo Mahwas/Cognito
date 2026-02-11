@@ -11,6 +11,12 @@ export interface ModuleResource {
   source?: string;
 }
 
+export interface ModuleContent {
+  advice: string;
+  resources: ModuleResource[];
+  isFallback?: boolean;
+}
+
 export interface StudyModule {
   id: string;
   title: string;
@@ -18,6 +24,7 @@ export interface StudyModule {
   estimatedMinutes: number;
   topics: string[];
   isCompleted?: boolean;
+  content?: ModuleContent;
 }
 
 export interface StudyPlan {
